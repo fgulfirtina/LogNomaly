@@ -6,7 +6,16 @@
         <h1 class="page-title">Dashboard</h1>
         <p class="page-subtitle">System Overview &amp; Threat Monitoring</p>
     </div>
-    <div class="live-badge"><div class="live-dot"></div> Live Monitoring</div>
+    <div style="display:flex; align-items:center; gap:12px;">
+        @if (Model.HasData)
+        {
+            @* Rapor Dışa Aktarma Butonu *@
+            <button onclick="exportReport()" class="btn btn-primary btn-sm" style="border-radius:20px; padding: 8px 18px; background: var(--text-primary); color: white;">
+                📄 Export Incident Report
+            </button>
+        }
+        <div class="live-badge"><div class="live-dot"></div> Live Monitoring</div>
+    </div>
 </div>
 
 @if (!Model.HasData)
@@ -23,12 +32,9 @@
 else
 {
     var stats = Model.Stats!;
-    var normalCount  = stats.TotalLogs - stats.TotalAnomalies;
-    var normalPct    = stats.TotalLogs > 0 ? normalCount * 100.0 / stats.TotalLogs : 95;
-    var anomalyPct   = stats.TotalLogs > 0 ? stats.TotalAnomalies * 100.0 / stats.TotalLogs : 5;
-    var riskPct      = (int)(stats.AvgRiskScore * 100);
+    var normalCount = stats.TotalLogs - stats.TotalAnomalies;
+    var riskPct = (int)(stats.AvgRiskScore * 100);
 
-    <!-- KPI Grid -->
     <div class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-label">
@@ -64,7 +70,6 @@ else
     </div>
 
     <div class="two-col">
-        <!-- Risk Distribution -->
         <div class="card">
             <div class="card-header">
                 <div class="card-title">Risk Distribution</div>
@@ -73,9 +78,10 @@ else
             <div class="donut-wrap">
                 <canvas id="donutChart" width="120" height="120"></canvas>
                 <div style="flex:1">
-                    @{ var low = stats.RiskDistribution.GetValueOrDefault("Low", 0); }
-                    @{ var mid = stats.RiskDistribution.GetValueOrDefault("Medium", 0); }
-                    @{ var high = stats.RiskDistribution.GetValueOrDefault("High", 0); }
+                    @{
+                        var mid = stats.RiskDistribution.GetValueOrDefault("Medium", 0);
+                        var high = stats.RiskDistribution.GetValueOrDefault("High", 0);
+                    }
                     @foreach (var kv in new[] {
                         ("Normal",     normalCount, "#d0d0c8"),
                         ("Suspicious", mid,         "#c8f000"),
@@ -95,7 +101,6 @@ else
             </div>
         </div>
 
-        <!-- Tehdit Türleri -->
         <div class="card">
             <div class="card-header">
                 <div>
@@ -129,7 +134,6 @@ else
         </div>
     </div>
 
-    <!-- Recent Log Entries -->
     <div class="card">
         <div class="card-header">
             <div class="card-title">Recent Log Entries</div>
@@ -175,36 +179,52 @@ else
 
 @section Scripts {
 <script>
-(function() {
-    var stats = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.Stats?.RiskDistribution ?? new Dictionary<string,int>()));
-    var canvas = document.getElementById('donutChart');
-    if (!canvas || !stats) return;
-    var ctx = canvas.getContext('2d');
-    var total = @(Model.Stats?.TotalLogs ?? 1);
-    var normal = @(Model.Stats != null ? Model.Stats.TotalLogs - Model.Stats.TotalAnomalies : 0);
-    var mid  = stats['Medium'] || 0;
-    var high = stats['High']   || 0;
-    var segments = [
-        { val: normal, color: '#d0d0c8' },
-        { val: mid,    color: '#c8f000' },
-        { val: high,   color: '#e24b4a' },
-    ];
-    var cx=60, cy=60, r=46, inner=30, start=-Math.PI/2;
-    segments.forEach(function(s) {
-        if (!s.val) return;
-        var slice = (s.val / total) * Math.PI * 2;
-        ctx.beginPath(); ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, start, start+slice);
-        ctx.closePath(); ctx.fillStyle = s.color; ctx.fill();
-        start += slice;
-    });
-    ctx.beginPath(); ctx.arc(cx,cy,inner,0,Math.PI*2);
-    ctx.fillStyle='#fff'; ctx.fill();
-    var pct = total > 0 ? Math.round(normal*100/total) : 95;
-    ctx.fillStyle='#111'; ctx.font='500 16px Inter,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(pct+'%', cx, cy-6);
-    ctx.fillStyle='#aaa'; ctx.font='400 9px Inter,sans-serif';
-    ctx.fillText('NORMAL', cx, cy+9);
-})();
+    // 1. Rapor Dışa Aktarma Fonksiyonu
+    function exportReport() {
+        const sessionId = "@Model.SessionId";
+        if (sessionId) {
+            window.open('/Home/Report?sessionId=' + sessionId, '_blank');
+        } else {
+            alert("Rapor oluşturmak için aktif bir oturum bulunamadı.");
+        }
+    }
+
+    // 2. Donut Chart Çizimi
+    (function() {
+        var statsData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.Stats?.RiskDistribution ?? new Dictionary<string,int>()));
+        var canvas = document.getElementById('donutChart');
+        if (!canvas || !statsData) return;
+
+        var ctx = canvas.getContext('2d');
+        var total = @(Model.Stats?.TotalLogs ?? 1);
+        var normal = @(Model.Stats != null ? Model.Stats.TotalLogs - Model.Stats.TotalAnomalies : 0);
+        var mid = statsData['Medium'] || 0;
+        var high = statsData['High'] || 0;
+
+        var segments = [
+            { val: normal, color: '#d0d0c8' },
+            { val: mid,    color: '#c8f000' },
+            { val: high,   color: '#e24b4a' },
+        ];
+
+        var cx=60, cy=60, r=46, inner=30, start=-Math.PI/2;
+        segments.forEach(function(s) {
+            if (!s.val) return;
+            var slice = (s.val / total) * Math.PI * 2;
+            ctx.beginPath(); ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, start, start+slice);
+            ctx.closePath(); ctx.fillStyle = s.color; ctx.fill();
+            start += slice;
+        });
+
+        ctx.beginPath(); ctx.arc(cx,cy,inner,0,Math.PI*2);
+        ctx.fillStyle='#fff'; ctx.fill();
+
+        var pct = total > 0 ? Math.round(normal*100/total) : 95;
+        ctx.fillStyle='#111'; ctx.font='500 16px Inter,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(pct+'%', cx, cy-6);
+        ctx.fillStyle='#aaa'; ctx.font='400 9px Inter,sans-serif';
+        ctx.fillText('NORMAL', cx, cy+9);
+    })();
 </script>
 }

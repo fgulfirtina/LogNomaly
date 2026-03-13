@@ -47,7 +47,7 @@ public class HomeController : Controller
 
         if (logFile == null || logFile.Length == 0)
         {
-            vm.ErrorMessage = "Lütfen bir log dosyası seçin.";
+            vm.ErrorMessage = "Please Select a Log File.";
             return View(vm);
         }
 
@@ -55,7 +55,7 @@ public class HomeController : Controller
         var uploadResp = await _api.UploadFileAsync(logFile);
         if (uploadResp == null)
         {
-            vm.ErrorMessage = "Dosya yüklenemedi. Python API çalışıyor mu?";
+            vm.ErrorMessage = "Couldn't load the file. Does the Python API run?";
             return View(vm);
         }
 
@@ -63,7 +63,7 @@ public class HomeController : Controller
         var analyzeResp = await _api.AnalyzeFileAsync(uploadResp.FilePath, uploadResp.SessionId);
         if (analyzeResp == null)
         {
-            vm.ErrorMessage = "Analiz başarısız oldu.";
+            vm.ErrorMessage = "Analysis Failed.";
             return View(vm);
         }
 
@@ -90,14 +90,14 @@ public class HomeController : Controller
 
         if (string.IsNullOrWhiteSpace(logLine))
         {
-            vm.ErrorMessage = "Log satırı boş olamaz.";
+            vm.ErrorMessage = "Log Line cannot be null.";
             return View(vm);
         }
 
         var result = await _api.AnalyzeSingleAsync(logLine);
         if (result == null)
         {
-            vm.ErrorMessage = "Analiz başarısız. Python API çalışıyor mu?";
+            vm.ErrorMessage = "Couldn't load the file. Does the Python API run?";
             return View(vm);
         }
 
@@ -117,6 +117,24 @@ public class HomeController : Controller
             Result    = results.Results[index],
             SessionId = sessionId
         });
+    }
+
+
+    public async Task<IActionResult> Report(string sessionId)
+    {
+        if (string.IsNullOrEmpty(sessionId)) return RedirectToAction("Index");
+
+        var stats = await _api.GetStatsAsync(sessionId);
+        var results = await _api.GetResultsAsync(sessionId, 1, 100);
+
+        var vm = new ReportViewModel
+        {
+            SessionId = sessionId,
+            Stats = stats ?? new AnalysisStats(),
+            Results = results?.Results ?? new List<AnalysisResult>()
+        };
+
+        return View(vm);
     }
 
     // ── API Health Check (AJAX için) ─────────────────────────────────

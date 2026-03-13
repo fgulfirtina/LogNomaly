@@ -1,5 +1,5 @@
 """
-LogNomaly - Flask REST API (BGL modelleriyle uyumlu)
+LogNomaly - Flask REST API (Düzeltilmiş Versiyon)
 """
 
 import os, sys, re, uuid, logging, shutil
@@ -12,11 +12,20 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import RequestEntityTooLarge
 from scipy.sparse import hstack, csr_matrix
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+try:
+    from models.xai_explainer import XAIExplainer
+except ImportError:
+    XAIExplainer = None
+    print("UYARI: models.xai_explainer bulunamadı. XAI devre dışı kalacak.")
+
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s [%(levelname)s] %(name)s - %(message)s')
 logger = logging.getLogger("api")
 
-BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_DIR  = os.path.join(BASE_DIR, "saved_models")
 UPLOAD_DIR = os.path.join(BASE_DIR, "temp_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -33,6 +42,7 @@ class ModelBundle:
         self.iso = self.rf = self.tfidf = self.le = None
         self.feature_names = []
         self.loaded = False
+        self.explainer = None
 
     def load(self):
         for name in ["iso_forest.joblib", "rf_classifier.joblib", "feature_extractor.joblib"]:
@@ -53,6 +63,15 @@ class ModelBundle:
             self.le    = ext.level_encoder
             self.feature_names = getattr(ext, "feature_names", [])
 
+        # XAI Explainer Başlatma
+        if XAIExplainer and self.rf is not None:
+            try:
+                # RandomForestClassifier nesnesini doğrudan gönderiyoruz
+                self.explainer = XAIExplainer(self.rf, self.feature_names)
+                logger.info("XAI Explainer başarıyla başlatıldı.")
+            except Exception as e:
+                logger.error(f"XAI Explainer başlatma hatası: {e}")
+
         self.loaded = True
         logger.info("Modeller yuklendi. Feature: %d", self.iso.n_features_in_)
 
@@ -63,12 +82,11 @@ class ModelBundle:
         tv   = self.tfidf.transform([message])
         return hstack([csr_matrix(np.hstack([lenc, td])), tv]).toarray()
 
-
 bundle = ModelBundle()
 try:
     bundle.load()
-except FileNotFoundError as e:
-    logger.warning("%s", e)
+except Exception as e:
+    logger.error(f"Model yükleme hatası: {e}")
 
 # ======================================================================
 #  Kural Motoru (Layer 1)
@@ -92,6 +110,7 @@ def check_rules(message):
 def run_pipeline(level: str, message: str) -> dict:
     threat_type, rule_score = check_rules(message)
 
+    # Katman 1: Kural Eşleşmesi (Kritik Skor)
     if rule_score and rule_score >= 0.8:
         return {
             "level": level, "message": message,
@@ -102,6 +121,7 @@ def run_pipeline(level: str, message: str) -> dict:
             "risk_level": _to_level(rule_score), "shap_explanation": {},
         }
 
+    # Katman 2 & 3: ML Analizi
     x = bundle.vectorize(level, message)
     iso_score    = float(bundle.iso.decision_function(x)[0])
     anomaly_prob = float(np.clip(1.0 - (np.clip(iso_score, -0.5, 0.5) + 0.5), 0, 1))
@@ -118,6 +138,15 @@ def run_pipeline(level: str, message: str) -> dict:
     if threat_type and rule_score is None:
         risk = min(1.0, risk + 0.15)
 
+    # SHAP Analizi (Eğer risk yüksekse ve explainer hazırsa)
+    shap_data = {}
+    if risk >= 0.50 and bundle.explainer:
+        try:
+            # x[0] vektörünü explainer'a gönderiyoruz
+            shap_data = bundle.explainer.explain_prediction(x[0])
+        except Exception as e:
+            logger.warning(f"SHAP hatasi: {e}")
+
     return {
         "level": level, "message": message,
         "is_known_threat": False,
@@ -127,7 +156,8 @@ def run_pipeline(level: str, message: str) -> dict:
         "predicted_class": predicted_class,
         "rf_confidence": round(rf_conf, 4),
         "final_risk_score": round(float(risk), 4),
-        "risk_level": _to_level(risk), "shap_explanation": {},
+        "risk_level": _to_level(risk),
+        "shap_explanation": shap_data,
     }
 
 def _to_level(s):
@@ -157,9 +187,12 @@ _sessions = {}
 # ======================================================================
 @app.get("/api/health")
 def health():
-    return jsonify({"status": "ok", "models_loaded": bundle.loaded,
-                    "version": "1.0.0",
-                    "n_features": bundle.iso.n_features_in_ if bundle.loaded else 0})
+    return jsonify({
+        "status": "ok",
+        "models_loaded": bundle.loaded,
+        "xai_ready": bundle.explainer is not None,
+        "n_features": bundle.iso.n_features_in_ if bundle.loaded else 0
+    })
 
 @app.post("/api/analyze/single")
 def analyze_single():
@@ -175,6 +208,8 @@ def analyze_single():
     except Exception as e:
         logger.exception("Hata")
         return jsonify({"error": str(e)}), 500
+
+# ... (Diğer upload ve analyze_file endpointleri aynı kalabilir) ...
 
 @app.post("/api/upload")
 def upload_file():
@@ -201,6 +236,7 @@ def analyze_file_ep():
     if not file_path or not os.path.exists(file_path):
         return jsonify({"error": "Dosya bulunamadi."}), 400
     try:
+        # BGL ve HDFS regex'leri
         bgl_re  = re.compile(r"^(?:-|[A-Z0-9_]+)\s+\d+\s+\d{4}\.\d{2}\.\d{2}\s+\S+\s+\S+\s+\S+\s+\S+\s+(\w+)\s+(.+)$")
         hdfs_re = re.compile(r"^\d{6}\s+\d{6}\s+\d+\s+(\w+)\s+[^\s:]+:\s+(.+)$")
         records = []
@@ -209,8 +245,10 @@ def analyze_file_ep():
                 line = raw.strip()
                 if not line: continue
                 m = bgl_re.match(line) or hdfs_re.match(line)
-                records.append({"level": m.group(1).upper() if m else "INFO",
-                                 "message": m.group(2) if m else line})
+                records.append({
+                    "level": m.group(1).upper() if m else "INFO",
+                    "message": m.group(2) if m else line
+                })
         results = [run_pipeline(r["level"], r["message"]) for r in records]
         if session_id:
             _sessions[session_id] = results
@@ -234,12 +272,6 @@ def get_results(session_id):
     data = _sessions[session_id]
     return jsonify({"page": page, "limit": limit, "total": len(data),
                     "results": data[(page-1)*limit:page*limit]}), 200
-
-@app.errorhandler(RequestEntityTooLarge)
-def too_large(e): return jsonify({"error": "50MB limiti asildi."}), 413
-
-@app.errorhandler(404)
-def not_found(e): return jsonify({"error": "Endpoint bulunamadi."}), 404
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

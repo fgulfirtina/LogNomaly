@@ -20,12 +20,13 @@ class XAIExplainer:
     def __init__(self, rf_model, feature_names: list[str]):
         """
         Args:
-            rf_model: Eğitilmiş RandomForestModel örneği
+            rf_model: Eğitilmiş RandomForestClassifier veya RandomForestModel örneği
             feature_names: FeatureExtractor.feature_names listesi
         """
         self.feature_names = feature_names
         logger.info("SHAP TreeExplainer oluşturuluyor...")
-        self.explainer = shap.TreeExplainer(rf_model.model)
+        actual_model = getattr(rf_model, 'model', rf_model)
+        self.explainer = shap.TreeExplainer(actual_model)
         logger.info("SHAP Explainer hazır.")
 
     def explain_prediction(self, feature_vector: np.ndarray,
@@ -47,10 +48,7 @@ class XAIExplainer:
         x = feature_vector.reshape(1, -1)
         shap_values = self.explainer.shap_values(x)
 
-        # Multi-class: şüpheli sınıf (index 1+) için değerleri al
-        # shap_values shape: (n_classes, 1, n_features) veya (1, n_features)
         if isinstance(shap_values, list):
-            # En yüksek mutlak katkıyı olan sınıfı seç
             class_idx = int(np.argmax([np.abs(sv).sum() for sv in shap_values]))
             sv = shap_values[class_idx][0]
             base_val = float(self.explainer.expected_value[class_idx])
@@ -58,7 +56,6 @@ class XAIExplainer:
             sv = shap_values[0]
             base_val = float(self.explainer.expected_value)
 
-        # Top-N özellik seç
         abs_sv = np.abs(sv)
         top_indices = np.argsort(abs_sv)[::-1][:top_n]
 

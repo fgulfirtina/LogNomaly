@@ -1,0 +1,143 @@
+@model LogNomaly.Web.Models.ReportViewModel
+@{
+    Layout = null; // Raporun sidebar olmadan tam sayfa olması için
+    var stats = Model.Stats;
+}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Incident Report - @Model.SessionId</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <style>
+        body { background: #f0f2f5; padding: 40px; font-family: 'Inter', sans-serif; }
+        .report-paper {
+            background: white; width: 1000px; margin: 0 auto;
+            padding: 50px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            position: relative;
+        }
+        .report-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
+        .report-label { background: #f8fafc; padding: 15px 25px; border-radius: 12px; text-align: right; }
+        .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+        .summary-box { line-height: 1.8; color: #444; margin-bottom: 40px; }
+        .two-col-report { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; }
+
+        @@media print {
+            body { background: white; padding: 0; }
+            .report-paper { box-shadow: none; width: 100%; border-radius: 0; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="no-print" style="text-align:center; margin-bottom: 20px;">
+    <button onclick="window.print()" class="btn btn-primary">Download as PDF / Print</button>
+    <a href="javascript:history.back()" class="btn btn-outline">Back</a>
+</div>
+
+<div class="report-paper">
+    <div class="report-header">
+        <div>
+            <div style="display:flex; align-items:center; gap:15px; margin-bottom:10px;">
+                <div class="logo-icon" style="width:40px; height:40px;">L</div>
+                <h2 style="margin:0;">LogNomaly Analytics</h2>
+            </div>
+            <span style="color:var(--text-dim); text-transform:uppercase; font-size:12px; letter-spacing:1px;">Confidential Report</span>
+        </div>
+        <div class="report-label">
+            <h1 style="margin:0; font-size:24px;">Incident Report</h1>
+            <div style="font-size:12px; color:var(--text-muted); margin-top:5px;">
+                ID: #RPT-@Model.SessionId?.Substring(0,8).ToUpper()<br />
+                Generated: @Model.GeneratedAt.ToString("MMM dd, yyyy")
+            </div>
+        </div>
+    </div>
+
+    <div class="kpi-row">
+        <div class="kpi-card">
+            <div class="kpi-label">Logs Processed</div>
+            <div class="kpi-value" style="font-size:24px;">@stats.TotalLogs.ToString("N0")</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Avg Risk</div>
+            <div class="kpi-value" style="font-size:24px;">%@((stats.AvgRiskScore * 100).ToString("F1"))</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Anomalies</div>
+            <div class="kpi-value danger" style="font-size:24px;">@stats.TotalAnomalies</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">System Status</div>
+            <div class="active-badge" style="font-size:14px;"><div class="active-dot"></div> Operational</div>
+        </div>
+    </div>
+
+    <div class="summary-box">
+        <h3 style="margin-bottom:15px;">● Executive Summary</h3>
+        <p>
+            During the analysis session <strong>@Model.SessionId</strong>, LogNomaly systems analyzed a total volume of
+            <strong>@stats.TotalLogs</strong> log lines. While the overall risk level remains
+            <strong>@(stats.AvgRiskScore < 0.5 ? "Moderate" : "High")</strong>, we identified
+            <strong>@stats.TotalAnomalies</strong> distinct anomalies that require attention.
+            The most frequent threat vector identified was
+            <strong>@(stats.ThreatTypes.OrderByDescending(x => x.Value).FirstOrDefault().Key ?? "N/A")</strong>.
+        </p>
+    </div>
+
+    <div class="two-col-report">
+        <div>
+            <h3 style="margin-bottom:15px;">● Critical Incidents Log</h3>
+            <table class="log-table" style="font-size:11px;">
+                <thead>
+                    <tr>
+                        <th>Risk</th>
+                        <th>Class</th>
+                        <th>Message Preview</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in Model.Results.Where(x => x.FinalRiskScore > 0.6).Take(10))
+                    {
+                        <tr>
+                            <td><span class="risk-badge @r.RiskLevel">@r.RiskLevel</span></td>
+                            <td>@r.PredictedClass</td>
+                            <td style="max-width:250px; overflow:hidden;">@r.Message</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <div class="card" style="background:#f8fafc;">
+                <h4 style="margin-bottom:10px;">Primary Concern</h4>
+                <div style="font-size:32px; font-weight:600; color:var(--danger);">@stats.TotalAnomalies</div>
+                <div style="font-size:12px; color:var(--text-muted);">Threats Detected in Session</div>
+            </div>
+
+            <div class="card" style="margin-top:20px;">
+                <h4 style="margin-bottom:15px;">Threat Vectors</h4>
+                @foreach (var tv in stats.ThreatTypes.Take(3))
+                {
+                    <div style="margin-bottom:10px;">
+                        <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
+                            <span>@tv.Key</span>
+                            <span>@tv.Value</span>
+                        </div>
+                        <div class="kpi-progress"><div class="kpi-progress-fill" style="width: @(tv.Value * 100 / stats.TotalAnomalies)%"></div></div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top:50px; border-top: 1px solid #eee; padding-top:20px; font-size:10px; color:var(--text-dim); display:flex; justify-content:space-between;">
+        <span>© 2026 LogNomaly Inc. | Confidential & Proprietary</span>
+        <span>Page 1 of 1</span>
+    </div>
+</div>
+
+</body>
+</html>
