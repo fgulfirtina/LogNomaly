@@ -92,7 +92,7 @@ def prepare_data() -> pd.DataFrame:
     log.info("Label dağılımı:\n%s", df["label"].value_counts().to_string())
 
 
-    CLASS_LIMITS = {"Normal": 5, "SystemFailure": 200, "AppError": 50}
+    CLASS_LIMITS = {"Normal": 500, "SystemFailure": 5000, "AppError": 5000}
     parts = []
     for lbl, grp in df.groupby("label", sort=False):
         limit = CLASS_LIMITS.get(lbl, 50)
@@ -142,7 +142,7 @@ def extract_features(df: pd.DataFrame):
     safe_levels = df["level"].apply(lambda x: x if x in LEVEL_ORDER else "UNKNOWN")
     level_enc = le.transform(safe_levels).reshape(-1, 1)
 
-    tfidf = TfidfVectorizer(max_features=150, sublinear_tf=True, ngram_range=(1, 2))
+    tfidf = TfidfVectorizer(max_features=1000, sublinear_tf=True, ngram_range=(1, 2))
     tfidf_mat = tfidf.fit_transform(df["message"].fillna(""))
 
     time_delta = np.zeros((len(df), 1))
@@ -225,7 +225,7 @@ def save_extractor(tfidf, le):
         ext.tfidf             = tfidf
         ext.level_encoder     = le
         ext._is_fitted        = True
-        ext.max_tfidf_features = 150
+        ext.max_tfidf_features = 1000
         ext.feature_names     = (["level_encoded", "time_delta_sec"]
                                   + tfidf.get_feature_names_out().tolist())
         joblib.dump(ext, os.path.join(MODEL_DIR, "feature_extractor.joblib"))
