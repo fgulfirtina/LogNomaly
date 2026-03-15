@@ -38,6 +38,13 @@
                 <div class="result-score-big @r.RiskLevel">@score/100</div>
             </div>
             <span class="risk-badge @r.RiskLevel" style="font-size:14px; padding:8px 18px;">@r.RiskLevel.ToUpper() THREAT</span>
+            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
+                <span class="risk-badge @r.RiskLevel" style="font-size:14px; padding:8px 18px;">@r.RiskLevel.ToUpper() THREAT</span>
+
+                <span style="font-size:11px; color:var(--text-muted); border:1px solid #444; padding:4px 10px; border-radius:12px; background:var(--bg-page);">
+                    🤖 Routed by: <strong style="color:var(--text-primary);">@(r.DatasetRouted ?? "BGL")</strong>
+                </span>
+            </div>
         </div>
 
         <div class="card" style="background:#1a1a1a; border:none; padding:0; overflow:hidden; margin-bottom:24px;">
@@ -67,6 +74,41 @@
                     {
                         <p>The system identified statistical anomalies in the log structure. Further investigation is recommended.</p>
                     }
+                </div>
+                <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+                    <div class="card-subtitle" style="text-transform:uppercase; font-size:11px; margin-bottom:12px;">Recommended Actions</div>
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                        @if (r.RiskLevel == "Low")
+                        {
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; padding:10px; border-radius:6px;">
+                                <span style="color:var(--ok)">✓</span> System operating normally. No action required.
+                            </div>
+                        }
+                        else if (r.PredictedClass == "SystemFailure" || r.DatasetRouted == "HDFS")
+                        {
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; padding:10px; border-radius:6px;">
+                                <span style="color:#eab308">🔧</span> Run HDFS fsck (File System Check)
+                            </div>
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; padding:10px; border-radius:6px;">
+                                <span style="color:#eab308">💾</span> Inspect DataNode health & memory usage
+                            </div>
+                        }
+                        else if (r.IsKnownThreat || r.PredictedClass != "Normal")
+                        {
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; border-left:3px solid var(--danger); padding:10px; border-radius:6px;">
+                                <span style="color:var(--danger)">⊘</span> Block associated IP Address immediately
+                            </div>
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; padding:10px; border-radius:6px;">
+                                <span style="color:var(--danger)">🛡️</span> Isolate affected endpoints
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; padding:10px; border-radius:6px;">
+                                <span style="color:#888">👀</span> Flag for manual analyst review
+                            </div>
+                        }
+                    </div>
                 </div>
             </div>
 

@@ -9,6 +9,10 @@
     <div style="display:flex; align-items:center; gap:12px;">
         @if (Model.HasData)
         {
+            <div style="border:1px solid #444; padding:6px 14px; border-radius:20px; font-size:12px; color:var(--text-muted);">
+                🧠 AI Pipeline: <strong style="color:var(--text-primary);">@(Model.Stats?.DatasetRouted ?? "Auto") Model</strong>
+            </div>
+
             @* Rapor Dışa Aktarma Butonu *@
             <button onclick="exportReport()" class="btn btn-primary btn-sm" style="border-radius:20px; padding: 8px 18px; background: var(--text-primary); color: white;">
                 📄 Export Incident Report

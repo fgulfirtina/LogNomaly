@@ -35,6 +35,14 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 CORS(app)
 
+def clean_log(msg: str) -> str:
+        """Mesajdaki gereksiz ID, IP ve sayıları maskeleyerek modelin asıl kelimelere odaklanmasını sağlar."""
+        import re
+        msg = re.sub(r'blk_-?\d+', '<BLK>', msg) # Blok ID'leri gizle
+        msg = re.sub(r'/?\d+\.\d+\.\d+\.\d+:\d+', '<IP>', msg) # IP adreslerini gizle
+        msg = re.sub(r'\b\d+\b', '<NUM>', msg) # Tekil sayıları gizle
+        return msg
+
 # ======================================================================
 #  Model Bundle (Multi-Dataset Uyumlu Sınıf)
 # ======================================================================
@@ -83,7 +91,8 @@ class ModelBundle:
         safe = level if level in self.le.classes_ else "UNKNOWN"
         lenc = self.le.transform([safe]).reshape(1, 1)
         td   = np.zeros((1, 1))
-        tv   = self.tfidf.transform([message])
+        cleaned_msg = clean_log(message)
+        tv   = self.tfidf.transform([cleaned_msg])
         return hstack([csr_matrix(np.hstack([lenc, td])), tv]).toarray()
 
 
@@ -151,13 +160,29 @@ def run_pipeline(level: str, message: str) -> dict:
     anomaly_prob = float(np.clip(1.0 - (np.clip(iso_score, -0.5, 0.5) + 0.5), 0, 1))
     iso_pred     = int(bundle.iso.predict(x)[0])
 
-    if iso_pred == 1:
-        risk, predicted_class, rf_conf = anomaly_prob * 0.2, "Normal", 0.0
+
+
+    probs           = bundle.rf.predict_proba(x)[0]
+    predicted_class = bundle.rf.classes_[int(np.argmax(probs))]
+    rf_conf         = float(np.max(probs))
+    if predicted_class == "Normal":
+        # Eğer Normal diyorsa, risk sadece ufak bir anomali şüphesinden ibarettir
+        risk = anomaly_prob * 0.3 
     else:
-        probs           = bundle.rf.predict_proba(x)[0]
-        predicted_class = bundle.rf.classes_[int(np.argmax(probs))]
-        rf_conf         = float(np.max(probs))
-        risk            = 0.4 * anomaly_prob + 0.6 * rf_conf
+        # Eğer SystemFailure veya BruteForce diyorsa, güven skorunu riske ekle!
+        risk = 0.4 * anomaly_prob + 0.6 * rf_conf
+
+    # +++ YENİ: HYBRID SIEM OVERRIDE (Gerçek Dünya Güvenlik Ağı) +++
+    # Eğer yapay zeka (RF) logu eğitimde görmediği için kaçırdıysa, 
+    # Log Seviyesine (Level) bakarak riski biz manuel olarak fırlatıyoruz!
+    msg_lower = message.lower()
+    if level in ["ERROR", "CRITICAL", "FATAL"] or "outofmemory" in msg_lower or "corrupted" in msg_lower:
+        risk = max(risk, 0.85) # Skoru en az 0.85 yap (KIRMIZI)
+        predicted_class = "SystemFailure"
+    elif level in ["WARN", "WARNING"] or "missing" in msg_lower:
+        risk = max(risk, 0.65) # Skoru en az 0.65 yap (TURUNCU)
+        if predicted_class == "Normal": 
+            predicted_class = "SystemFailure"
 
     if threat_type and rule_score is None:
         risk = min(1.0, risk + 0.15)
@@ -180,6 +205,7 @@ def run_pipeline(level: str, message: str) -> dict:
         "final_risk_score": round(float(risk), 4),
         "risk_level": _to_level(risk),
         "shap_explanation": shap_data,
+        "dataset_routed": dataset_type,
     }
 
 def _to_level(s):
@@ -190,16 +216,22 @@ def _stats(results):
     total = len(results)
     dist  = {"Low": 0, "Medium": 0, "High": 0}
     types = {}
+    
+    # +++ YENİ: İlk logun nereye yönlendirildiğine bakıp tüm setin adını koyuyoruz +++
+    dataset_type = results[0].get("dataset_routed", "Unknown") if total > 0 else "Unknown"
+    
     for r in results:
         dist[r["risk_level"]] = dist.get(r["risk_level"], 0) + 1
         if r["threat_type"]:
             types[r["threat_type"]] = types.get(r["threat_type"], 0) + 1
+            
     return {
         "total_logs": total,
         "total_anomalies": sum(1 for r in results if r["final_risk_score"] >= 0.5),
         "avg_risk_score": round(sum(r["final_risk_score"] for r in results) / total, 4),
         "risk_distribution": dist,
         "threat_types": types,
+        "dataset_routed": dataset_type # Dashboard'a gidecek olan sihirli veri!
     }
 
 _sessions = {}
@@ -265,7 +297,7 @@ def analyze_file_ep():
                 if m_bgl:
                     records.append({"level": m_bgl.group(1).upper(), "message": m_bgl.group(2)})
                 elif m_hdfs:
-                    records.append({"level": m_hdfs.group(1).upper(), "message": line}) 
+                    records.append({"level": m_hdfs.group(1).upper(), "message": m_hdfs.group(2)}) 
                 else:
                     records.append({"level": "INFO", "message": line})
                     

@@ -17,7 +17,7 @@ log = logging.getLogger("train_multi")
 # AYARLAR: Eğitmek istediğin veri setini buradan seç! ("BGL" veya "HDFS")
 # =====================================================================
 DATASET_MODE = "HDFS"  
-MAX_LINES = 'None' # 32 GB RAM şovu için None kalsın :)
+MAX_LINES = 'None'
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "data")
@@ -43,6 +43,14 @@ for _name in LOG_NAMES:
 # =====================================================================
 # 1. VERİ HAZIRLAMA (BGL ve HDFS için Çift Motor)
 # =====================================================================
+def clean_log(msg: str) -> str:
+    """Mesajdaki gereksiz ID, IP ve sayıları maskeleyerek modelin asıl kelimelere odaklanmasını sağlar."""
+    import re
+    msg = re.sub(r'blk_-?\d+', '<BLK>', msg) # Blok ID'leri gizle
+    msg = re.sub(r'/?\d+\.\d+\.\d+\.\d+:\d+', '<IP>', msg) # IP adreslerini gizle
+    msg = re.sub(r'\b\d+\b', '<NUM>', msg) # Tekil sayıları gizle
+    return msg
+
 def prepare_data() -> pd.DataFrame:
     if TARGET_PATH is None:
         sys.exit(
@@ -59,11 +67,45 @@ def prepare_data() -> pd.DataFrame:
     )
     hdfs_re = re.compile(r"^\d{6}\s+\d{6}\s+\d+\s+(\w+)\s+[^\s:]+:\s+(.+)$")
 
+    normal_count = 0
+    anomaly_count = 0
     records = []
     skipped = 0
-    total   = 0
 
     with open(TARGET_PATH, "r", encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+
+            if DATASET_MODE == "HDFS":
+                m = hdfs_re.match(line)
+                if not m:
+                    skipped += 1
+                    continue
+                level = _norm_level(m.group(1))
+                raw_message = m.group(2)
+
+                message = clean_log(raw_message)
+
+                # Hata seviyelerini anomali kabul et veya içinde exception/error geçiyorsa
+                if level in ["ERROR", "CRITICAL", "WARNING"] or "Exception" in message or "Error" in message:
+                    label = "SystemFailure"
+                else:
+                    label = "Normal"
+
+                # AKILLI FİLTRE (SMART UNDERSAMPLING)
+                if label == "Normal":
+                    if normal_count < 5000000: 
+                        normal_count += 1
+                        records.append({"level": level, "service": "HDFS", "message": message, "label": label})
+                else:
+                    if anomaly_count < 1000000: # YENİ SINIR!
+                        anomaly_count += 1
+                        records.append({"level": level, "service": "HDFS", "message": message, "label": label})
+            
+            # (BGL kısmı aynı kalabilir, biz HDFS'e odaklanıyoruz)
+
         for raw in f:
             if MAX_LINES != 'None' and total >= int(MAX_LINES):
                 break

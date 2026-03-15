@@ -32,6 +32,8 @@ public class AnalysisResult
     public double FinalRiskScore { get; set; }
     public string RiskLevel { get; set; } = "Low";
     public ShapExplanation? ShapExplanation { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("dataset_routed")]
+    public string DatasetRouted { get; set; } = string.Empty;
 }
 
 public class ShapExplanation
@@ -56,6 +58,8 @@ public class AnalysisStats
     public Dictionary<string, int> RiskDistribution { get; set; } = new();
     public Dictionary<string, int> ThreatTypes { get; set; } = new();
     public double AnomalyRate { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("dataset_routed")]
+    public string DatasetRouted { get; set; } = string.Empty;
 }
 
 public class AnalyzeResponse
