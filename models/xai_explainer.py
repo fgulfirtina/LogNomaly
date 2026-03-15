@@ -51,10 +51,20 @@ class XAIExplainer:
         if isinstance(shap_values, list):
             class_idx = int(np.argmax([np.abs(sv).sum() for sv in shap_values]))
             sv = shap_values[class_idx][0]
-            base_val = float(self.explainer.expected_value[class_idx])
+            # DÜZELTME: expected_value dizi ise ilk elemanını alıyoruz
+            ev = self.explainer.expected_value[class_idx]
+            base_val = float(ev[0] if isinstance(ev, (np.ndarray, list)) else ev)
         else:
-            sv = shap_values[0]
-            base_val = float(self.explainer.expected_value)
+            # SHAP bazen (n_samples, n_features, n_classes) dönebilir
+            if len(shap_values.shape) == 3:
+                class_idx = int(np.argmax(np.abs(shap_values[0]).sum(axis=0)))
+                sv = shap_values[0, :, class_idx]
+                ev = self.explainer.expected_value[class_idx]
+                base_val = float(ev[0] if isinstance(ev, (np.ndarray, list)) else ev)
+            else:
+                sv = shap_values[0]
+                ev = self.explainer.expected_value
+                base_val = float(ev[0] if isinstance(ev, (np.ndarray, list)) else ev)
 
         abs_sv = np.abs(sv)
         top_indices = np.argsort(abs_sv)[::-1][:top_n]
