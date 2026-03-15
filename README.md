@@ -86,23 +86,8 @@ LogNomaly
 ├── training/           # training scripts
 ├── tests/              # unit tests
 ├── LogNomaly.Web/      # ASP.NET dashboard
-└── docs/               # architecture diagrams
-```
-
----
-
-## Dataset
-
-This project uses the **Blue Gene/L (BGL) log dataset**, a widely used benchmark for log anomaly detection research.
-
-Download dataset from Kaggle:
-
-https://www.kaggle.com/datasets/omduggineni/loghub-bgl-log-data
-
-Place it inside:
-
-```
-data/BGL.log
+├── docs/               # architecture diagrams
+└── saved_models/       # trained models
 ```
 
 ---
@@ -124,6 +109,55 @@ pip install -r requirements.txt
 
 ---
 
+## Datasets
+
+The system log datasets (BGL and HDFS) used for training and evaluating the machine learning models in this project were obtained from **[LogHub](https://github.com/logpai/loghub)**. 
+
+LogHub is a freely available collection of system log datasets maintained by LogPAI, specifically curated for AI-powered log analytics, anomaly detection, and research purposes. We would like to acknowledge and thank the creators and contributors of LogHub for providing these invaluable open-source resources to the academic community. The log datasets we used are as follows:
+
+This project uses the **Blue Gene/L (BGL) log dataset**, a widely used benchmark for log anomaly detection research.
+
+Download link: [🔗](https://zenodo.org/records/8196385/files/BGL.zip?download=1)
+
+Place it inside:
+
+```
+data/BGL.log
+```
+
+This project uses the **Hadoop Distributed File System (HDFS) v1 log dataset**, a popular benchmark generated in a private cloud environment.
+
+Download link: [🔗](https://zenodo.org/records/8196385/files/HDFS_v1.zip?download=1)
+
+Place it inside:
+
+```
+data/HDFS.log
+```
+
+---
+
+## Train the Models
+
+Before running the training script, open `train.py` and set the `DATASET_MODE` variable to your target dataset (either `"BGL"` or `"HDFS"`). Once configured, execute the following command:
+
+```
+python train.py
+```
+---
+
+## Pre-trained Models
+
+Due to GitHub's file size limits, the trained machine learning models for LogNomaly are hosted via GitHub Releases rather than directly in the repository.
+
+**To run the project locally:**
+1. Navigate to the [Releases](../../releases) page of this repository.
+2. Download the latest release asset (`saved_models.zip`).
+3. Extract the contents and place the `.joblib` model files into your designated models directory (`/saved_models`).
+4. Run the application.
+
+---
+   
 ## Run the API
 
 ```
@@ -144,13 +178,17 @@ Open:
 ```
 http://localhost:5000
 ```
+(or a specific port assigned by your local environment)
 
 ---
 
-## Author
+## Authors
 
-Doğa Ece Koca
-Computer Engineering — Dokuz Eylül University
+Doğa Ece Koca —
+Computer Engineering Student at Dokuz Eylül University
+
+Fatmagül Fırtına —
+Computer Engineering Student at Dokuz Eylül University
 
 ---
 
