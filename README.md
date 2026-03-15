@@ -83,10 +83,9 @@ LogNomaly
 ├── app/                # Python API
 ├── models/             # ML models
 ├── utils/              # log processing
-├── training/           # training scripts
+├── data/               # log data for training
 ├── tests/              # unit tests
 ├── LogNomaly.Web/      # ASP.NET dashboard
-├── docs/               # architecture diagrams
 └── saved_models/       # trained models
 ```
 
