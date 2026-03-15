@@ -1,22 +1,20 @@
 """
-LogNomaly - Flask REST API (Düzeltilmiş Versiyon)
+LogNomaly - Flask REST API (Multi-Dataset & Smart Routing)
 """
 
-import os, sys, re, uuid, logging, shutil
+import os, sys, re, uuid, logging, shutil, json
 import numpy as np
 import pandas as pd
 import joblib
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from werkzeug.exceptions import RequestEntityTooLarge
 from scipy.sparse import hstack, csr_matrix
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-    
 from models.rule_engine import RuleEngine
 
 try:
@@ -31,6 +29,7 @@ logger = logging.getLogger("api")
 
 MODEL_DIR  = os.path.join(BASE_DIR, "saved_models")
 UPLOAD_DIR = os.path.join(BASE_DIR, "temp_uploads")
+HISTORY_FILE = os.path.join(BASE_DIR, "analysis_history.json") # Kalıcı Geçmiş Dosyası
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
@@ -38,24 +37,30 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 CORS(app)
 
 # ======================================================================
-#  Model Bundle
+#  Model Bundle (Multi-Dataset Uyumlu Sınıf)
 # ======================================================================
 class ModelBundle:
-    def __init__(self):
+    def __init__(self, dataset_type="BGL"):
+        self.dataset_type = dataset_type
+        self.prefix = "hdfs_" if dataset_type == "HDFS" else ""
         self.iso = self.rf = self.tfidf = self.le = None
         self.feature_names = []
         self.loaded = False
         self.explainer = None
 
     def load(self):
-        for name in ["iso_forest.joblib", "rf_classifier.joblib", "feature_extractor.joblib"]:
+        iso_name = f"{self.prefix}iso_forest.joblib"
+        rf_name  = f"{self.prefix}rf_classifier.joblib"
+        ext_name = f"{self.prefix}feature_extractor.joblib"
+
+        for name in [iso_name, rf_name, ext_name]:
             p = os.path.join(MODEL_DIR, name)
             if not os.path.exists(p):
                 raise FileNotFoundError(f"Bulunamadi: {p}")
 
-        self.iso = joblib.load(os.path.join(MODEL_DIR, "iso_forest.joblib"))
-        self.rf  = joblib.load(os.path.join(MODEL_DIR, "rf_classifier.joblib"))
-        ext      = joblib.load(os.path.join(MODEL_DIR, "feature_extractor.joblib"))
+        self.iso = joblib.load(os.path.join(MODEL_DIR, iso_name))
+        self.rf  = joblib.load(os.path.join(MODEL_DIR, rf_name))
+        ext      = joblib.load(os.path.join(MODEL_DIR, ext_name))
 
         if isinstance(ext, dict):
             self.tfidf = ext["tfidf"]
@@ -66,48 +71,89 @@ class ModelBundle:
             self.le    = ext.level_encoder
             self.feature_names = getattr(ext, "feature_names", [])
 
-        # XAI Explainer Başlatma
         if XAIExplainer and self.rf is not None:
             try:
-                # RandomForestClassifier nesnesini doğrudan gönderiyoruz
                 self.explainer = XAIExplainer(self.rf, self.feature_names)
-                logger.info("XAI Explainer başarıyla başlatıldı.")
             except Exception as e:
-                logger.error(f"XAI Explainer başlatma hatası: {e}")
+                logger.error(f"[{self.dataset_type}] XAI Explainer hatası: {e}")
 
         self.loaded = True
-        logger.info("Modeller yuklendi. Feature: %d", self.iso.n_features_in_)
+        logger.info("✅ %s Modelleri Yüklendi. Feature: %d", self.dataset_type, self.iso.n_features_in_)
 
     def vectorize(self, level: str, message: str) -> np.ndarray:
-    # Eski: safe = level if level in self.le.classes_ else "INFO"
-        safe = level if level in self.le.classes_ else "UNKNOWN" # DÜZELTİLDİ
+        safe = level if level in self.le.classes_ else "UNKNOWN"
         lenc = self.le.transform([safe]).reshape(1, 1)
         td   = np.zeros((1, 1))
         tv   = self.tfidf.transform([message])
         return hstack([csr_matrix(np.hstack([lenc, td])), tv]).toarray()
 
-bundle = ModelBundle()
-try:
-    bundle.load()
-except Exception as e:
-    logger.error(f"Model yükleme hatası: {e}")
 
-# Kural motorunu başlat
+# Global Model Sözlüğü
+bundles = {
+    "BGL": ModelBundle("BGL"),
+    "HDFS": ModelBundle("HDFS")
+}
+
+# Modelleri Başlat
+try:
+    bundles["BGL"].load()
+except Exception as e:
+    logger.error(f"BGL Yükleme Hatası: {e}")
+
+try:
+    bundles["HDFS"].load()
+except Exception as e:
+    logger.warning(f"HDFS Modeli Henüz Yok (Eğitim bitmediyse normaldir): {e}")
+
 rule_engine = RuleEngine()
+
+# ======================================================================
+#  Yardımcı Fonksiyonlar (Akıllı Yönlendirme ve Geçmiş Kaydı)
+# ======================================================================
+def detect_log_type(log_line: str) -> str:
+    """Logun formatına veya kelimelerine bakarak HDFS mi BGL mi olduğunu anlar."""
+    if re.match(r"^\d{6}\s+\d{6}\s+", log_line):
+        return "HDFS"
+    if "dfs.DataNode" in log_line or "Receiving block" in log_line or "blk_" in log_line:
+        return "HDFS"
+    return "BGL"
+
+def save_to_history(result: dict):
+    """Tekli analiz sonuçlarını veritabanı olmadan JSON dosyasına arşivler."""
+    history = []
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            pass
+    
+    # En yeni analiz en üstte dursun, toplam 50 kayıt tutalım
+    history.insert(0, result)
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(history[:50], f, ensure_ascii=False, indent=4)
 
 # ======================================================================
 #  Pipeline
 # ======================================================================
 def run_pipeline(level: str, message: str) -> dict:
-    # Eski check_rules yerine yeni nesneyi kullanıyoruz
+    # 1. Akıllı Yönlendirme (Smart Routing)
+    dataset_type = detect_log_type(message)
+    bundle = bundles[dataset_type]
+    
+    # Eğer HDFS seçildi ama model yoksa BGL'ye düş (Fallback)
+    if not bundle.loaded:
+        bundle = bundles["BGL"]
+        dataset_type = "BGL (Fallback)"
+
+    # 2. Kural Motoru
     rule_result = rule_engine.check(message)
     threat_type = rule_result["threat_type"]
-    rule_score = rule_result["score"]
+    rule_score  = rule_result["score"]
 
-    # Katman 1: Kural Eşleşmesi (Kritik Skor)
     if rule_score and rule_score >= 0.8:
         return {
-            "level": level, "message": message,
+            "level": level, "message": message, "dataset_routed": dataset_type,
             "is_known_threat": True, "threat_type": threat_type,
             "matched_rule": threat_type, "if_prediction": -1,
             "if_anomaly_score": 1.0, "predicted_class": threat_type,
@@ -115,7 +161,7 @@ def run_pipeline(level: str, message: str) -> dict:
             "risk_level": _to_level(rule_score), "shap_explanation": {},
         }
 
-    # Katman 2 & 3: ML Analizi
+    # 3. ML Analizi (Seçilen Uzman Model ile)
     x = bundle.vectorize(level, message)
     iso_score    = float(bundle.iso.decision_function(x)[0])
     anomaly_prob = float(np.clip(1.0 - (np.clip(iso_score, -0.5, 0.5) + 0.5), 0, 1))
@@ -132,17 +178,15 @@ def run_pipeline(level: str, message: str) -> dict:
     if threat_type and rule_score is None:
         risk = min(1.0, risk + 0.15)
 
-    # SHAP Analizi (Eğer risk yüksekse ve explainer hazırsa)
     shap_data = {}
     if risk >= 0.50 and bundle.explainer:
         try:
-            # x[0] vektörünü explainer'a gönderiyoruz
             shap_data = bundle.explainer.explain_prediction(x[0])
         except Exception as e:
             logger.warning(f"SHAP hatasi: {e}")
 
     return {
-        "level": level, "message": message,
+        "level": level, "message": message, "dataset_routed": dataset_type,
         "is_known_threat": False,
         "threat_type": predicted_class if predicted_class != "Normal" else None,
         "matched_rule": threat_type, "if_prediction": iso_pred,
@@ -183,27 +227,32 @@ _sessions = {}
 def health():
     return jsonify({
         "status": "ok",
-        "models_loaded": bundle.loaded,
-        "xai_ready": bundle.explainer is not None,
-        "n_features": bundle.iso.n_features_in_ if bundle.loaded else 0
+        "bgl_loaded": bundles["BGL"].loaded,
+        "hdfs_loaded": bundles["HDFS"].loaded,
     })
 
 @app.post("/api/analyze/single")
 def analyze_single():
-    if not bundle.loaded:
-        return jsonify({"error": "Modeller yuklenmedi."}), 503
     body     = request.get_json(silent=True) or {}
     log_line = body.get("log", "").strip()
     level    = body.get("level", "INFO").strip().upper()
     if not log_line:
         return jsonify({"error": "'log' alani bos olamaz."}), 400
     try:
-        return jsonify(run_pipeline(level, log_line)), 200
+        result = run_pipeline(level, log_line)
+        save_to_history(result) # Geçmişe Kaydet!
+        return jsonify(result), 200
     except Exception as e:
         logger.exception("Hata")
         return jsonify({"error": str(e)}), 500
 
-# ... (Diğer upload ve analyze_file endpointleri aynı kalabilir) ...
+@app.get("/api/history")
+def get_history():
+    """Kaydedilen geçmiş analizleri döndürür."""
+    if not os.path.exists(HISTORY_FILE):
+        return jsonify([]), 200
+    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+        return jsonify(json.load(f)), 200
 
 @app.post("/api/upload")
 def upload_file():
@@ -222,15 +271,12 @@ def upload_file():
 
 @app.post("/api/analyze")
 def analyze_file_ep():
-    if not bundle.loaded:
-        return jsonify({"error": "Modeller yuklenmedi."}), 503
     body      = request.get_json(silent=True) or {}
     file_path = body.get("file_path", "")
     session_id = body.get("session_id", "")
     if not file_path or not os.path.exists(file_path):
         return jsonify({"error": "Dosya bulunamadi."}), 400
     try:
-        # BGL ve HDFS regex'leri
         bgl_re  = re.compile(r"^(?:-|[A-Z0-9_]+)\s+\d+\s+\d{4}\.\d{2}\.\d{2}\s+\S+\s+\S+\s+\S+\s+\S+\s+(\w+)\s+(.+)$")
         hdfs_re = re.compile(r"^\d{6}\s+\d{6}\s+\d+\s+(\w+)\s+[^\s:]+:\s+(.+)$")
         records = []
@@ -238,11 +284,16 @@ def analyze_file_ep():
             for raw in f:
                 line = raw.strip()
                 if not line: continue
-                m = bgl_re.match(line) or hdfs_re.match(line)
-                records.append({
-                    "level": m.group(1).upper() if m else "INFO",
-                    "message": m.group(2) if m else line
-                })
+                m_bgl = bgl_re.match(line)
+                m_hdfs = hdfs_re.match(line)
+                
+                if m_bgl:
+                    records.append({"level": m_bgl.group(1).upper(), "message": m_bgl.group(2)})
+                elif m_hdfs:
+                    records.append({"level": m_hdfs.group(1).upper(), "message": line}) # HDFS için tam satırı gönder
+                else:
+                    records.append({"level": "INFO", "message": line})
+                    
         results = [run_pipeline(r["level"], r["message"]) for r in records]
         if session_id:
             _sessions[session_id] = results
