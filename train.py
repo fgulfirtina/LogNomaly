@@ -1,3 +1,4 @@
+import random
 import os, re, sys, logging
 import numpy as np
 import pandas as pd
@@ -16,7 +17,7 @@ log = logging.getLogger("train_multi")
 # =====================================================================
 # AYARLAR: Eğitmek istediğin veri setini buradan seç! ("BGL" veya "HDFS")
 # =====================================================================
-DATASET_MODE = "HDFS"  
+DATASET_MODE = "BGL"  
 MAX_LINES = 'None'
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +52,27 @@ def clean_log(msg: str) -> str:
     msg = re.sub(r'\b\d+\b', '<NUM>', msg) # Tekil sayıları gizle
     return msg
 
+def extract_hour(log_line: str, dataset_type: str) -> int:
+    """
+    Extracts the hour of the day (0-23) from the log timestamp.
+    Returns -1 if parsing fails or timestamp is missing.
+    """
+    import re
+    try:
+        if dataset_type == "HDFS":
+            # Example: "081109 203518 143 INFO..." -> Extract "20"
+            m = re.search(r'^\d{6}\s(\d{2})\d{4}', log_line)
+            if m: return int(m.group(1))
+            
+        elif dataset_type == "BGL":
+            # Example: "- 1117838570 2005.06.03 R02-M1-N0-C:J12-U11 2005-06-03-15.42.50.363779" -> Extract "15"
+            m = re.search(r'\d{4}-\d{2}-\d{2}-(\d{2})\.\d{2}\.\d{2}', log_line)
+            if m: return int(m.group(1))
+    except Exception:
+        pass
+        
+    return -1
+
 def prepare_data() -> pd.DataFrame:
     if TARGET_PATH is None:
         sys.exit(
@@ -71,81 +93,119 @@ def prepare_data() -> pd.DataFrame:
     anomaly_count = 0
     records = []
     skipped = 0
+    total = 0
 
     with open(TARGET_PATH, "r", encoding="utf-8", errors="replace") as f:
         for raw in f:
+            if MAX_LINES != 'None' and total >= int(MAX_LINES):
+                break
+                
             line = raw.strip()
             if not line:
                 continue
+                
+            total += 1
 
             if DATASET_MODE == "HDFS":
                 m = hdfs_re.match(line)
                 if not m:
                     skipped += 1
                     continue
+                    
                 level = _norm_level(m.group(1))
                 raw_message = m.group(2)
-
                 message = clean_log(raw_message)
+                service = "HDFS" # +++ DÜZELTME 1: Eksik değişken eklendi +++
 
-                # Hata seviyelerini anomali kabul et veya içinde exception/error geçiyorsa
                 if level in ["ERROR", "CRITICAL", "WARNING"] or "Exception" in message or "Error" in message:
                     label = "SystemFailure"
                 else:
                     label = "Normal"
 
-                # AKILLI FİLTRE (SMART UNDERSAMPLING)
+                hour_val = extract_hour(line, DATASET_MODE)
+
+                # +++ SYNTHETIC DATA AUGMENTATION (HDFS) +++
                 if label == "Normal":
-                    if normal_count < 5000000: 
-                        normal_count += 1
-                        records.append({"level": level, "service": "HDFS", "message": message, "label": label})
+                    import random
+                    if random.random() < 0.05:
+                        synthetic_hour = random.randint(0, 5)
+                        synthetic_label = "TemporalAnomaly" 
+                        if anomaly_count < 1000000:
+                            anomaly_count += 1
+                            records.append({
+                                "level": level, "service": service, 
+                                "message": message, "label": synthetic_label, 
+                                "hour": synthetic_hour
+                            })
+                    else:
+                        if normal_count < 5000000: 
+                            normal_count += 1
+                            records.append({
+                                "level": level, "service": service, 
+                                "message": message, "label": label, 
+                                "hour": hour_val
+                            })
                 else:
-                    if anomaly_count < 1000000: # YENİ SINIR!
+                    if anomaly_count < 1000000:
                         anomaly_count += 1
-                        records.append({"level": level, "service": "HDFS", "message": message, "label": label})
-            
-            # (BGL kısmı aynı kalabilir, biz HDFS'e odaklanıyoruz)
+                        records.append({
+                            "level": level, "service": service, 
+                            "message": message, "label": label, 
+                            "hour": hour_val
+                        })
 
-        for raw in f:
-            if MAX_LINES != 'None' and total >= int(MAX_LINES):
-                break
-            line = raw.strip()
-            if not line:
-                continue
-            total += 1
-
-            if DATASET_MODE == "BGL":
+            elif DATASET_MODE == "BGL":
                 m = bgl_re.match(line)
                 if not m:
                     skipped += 1
                     continue
-                flag, node2, component, level, message = m.groups()
+                    
+                flag, node2, component, level, raw_message = m.groups()
                 label = _map_label(flag)
                 level = _norm_level(level)
                 service = component
-            else:
-                # HDFS Okuma Mantığı
-                m = hdfs_re.match(line)
-                if not m:
-                    skipped += 1
-                    continue
-                level, message = m.groups()
-                level = _norm_level(level)
-                # Basit bir Heuristic: Warn/Error/Fatal seviyelerini anomali kabul et
-                label = "SystemFailure" if level in ["ERROR", "CRITICAL", "WARNING"] else "Normal"
-                service = "HDFS_Node"
+                message = clean_log(raw_message)
+                
+                hour_val = extract_hour(line, DATASET_MODE)
 
-            records.append({
-                "level":   level,
-                "service": service,
-                "message": message,
-                "label":   label,
-            })
+                # +++ DÜZELTME 2: SYNTHETIC DATA AUGMENTATION (BGL İÇİN DE EKLENDİ) +++
+                if label == "Normal":
+                    import random
+                    if random.random() < 0.05:
+                        synthetic_hour = random.randint(0, 5)
+                        synthetic_label = "TemporalAnomaly" 
+                        if anomaly_count < 1000000:
+                            anomaly_count += 1
+                            records.append({
+                                "level": level, "service": service, 
+                                "message": message, "label": synthetic_label, 
+                                "hour": synthetic_hour
+                            })
+                    else:
+                        if normal_count < 5000000: 
+                            normal_count += 1
+                            records.append({
+                                "level": level, "service": service, 
+                                "message": message, "label": label, 
+                                "hour": hour_val
+                            })
+                else:
+                    if anomaly_count < 1000000:
+                        anomaly_count += 1
+                        records.append({
+                            "level": level, "service": service, 
+                            "message": message, "label": label, 
+                            "hour": hour_val
+                        })
 
-            if len(records) % 500_000 == 0:
-                log.info("  %d satır işlendi...", len(records))
+            if total % 500_000 == 0:
+                log.info("  Processed %d lines...", total)
 
     df = pd.DataFrame(records)
+    
+    # SAFETY CHECK: If the DataFrame is empty, something is wrong with regex or the file
+    if df.empty:
+        sys.exit(f"CRITICAL ERROR: No valid logs found for {DATASET_MODE}. Check regex or file content!")
 
     log.info("Parse tamamlandı: %d kayıt, %d satır atlandı", len(df), skipped)
     log.info("Label dağılımı:\n%s", df["label"].value_counts().to_string())
@@ -199,10 +259,15 @@ def extract_features(df: pd.DataFrame):
     tfidf = TfidfVectorizer(max_features=1000, sublinear_tf=True, ngram_range=(1, 2))
     tfidf_mat = tfidf.fit_transform(df["message"].fillna(""))
 
-    time_delta = np.zeros((len(df), 1))
+    # +++ NEW UEBA TEMPORAL FEATURE +++
+    # Normalize the hour to 0.0 - 1.0 range for better ML performance.
+    # If hour is missing (-1), set to neutral (0.5).
+    hours_normalized = df["hour"].apply(lambda x: (x / 23.0) if x != -1 else 0.5).values.reshape(-1, 1)
 
-    X = hstack([csr_matrix(np.hstack([level_enc, time_delta])), tfidf_mat]).toarray()
-    log.info("Feature matrix: %s", X.shape)
+    # Combine categorical, temporal, and text features
+    X = hstack([csr_matrix(np.hstack([level_enc, hours_normalized])), tfidf_mat]).toarray()
+    
+    log.info("Feature matrix generated with Temporal Context (UEBA): %s", X.shape)
     return X, tfidf, le
 
 # =====================================================================
@@ -259,11 +324,11 @@ def save_extractor(tfidf, le):
         ext.level_encoder      = le
         ext._is_fitted         = True
         ext.max_tfidf_features = 1000
-        ext.feature_names      = (["level_encoded", "time_delta_sec"] + tfidf.get_feature_names_out().tolist())
+        ext.feature_names      = (["level_encoded", "log_hour"] + tfidf.get_feature_names_out().tolist())
         joblib.dump(ext, ext_path)
     except ImportError:
         obj = {"tfidf": tfidf, "level_encoder": le,
-               "feature_names": (["level_encoded", "time_delta_sec"] + tfidf.get_feature_names_out().tolist())}
+               "feature_names": (["level_encoded", "log_hour"] + tfidf.get_feature_names_out().tolist())}
         joblib.dump(obj, ext_path)
     log.info("  ✅ %s kaydedildi.", os.path.basename(ext_path))
 

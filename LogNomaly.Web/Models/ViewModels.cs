@@ -1,5 +1,5 @@
 namespace LogNomaly.Web.Models;
-
+using System.Text.Json.Serialization;
 // ── API Response Models (Python backend ile uyumlu) ──────────────────
 
 public class HealthResponse
@@ -32,8 +32,14 @@ public class AnalysisResult
     public double FinalRiskScore { get; set; }
     public string RiskLevel { get; set; } = "Low";
     public ShapExplanation? ShapExplanation { get; set; }
-    [System.Text.Json.Serialization.JsonPropertyName("dataset_routed")]
+    [JsonPropertyName("dataset_routed")]
     public string DatasetRouted { get; set; } = string.Empty;
+
+    [JsonPropertyName("raw_log")]
+    public string RawLog { get; set; } = string.Empty;
+
+    [JsonPropertyName("extracted_hour")]
+    public int ExtractedHour { get; set; } = -1;
 }
 
 public class ShapExplanation
@@ -58,7 +64,7 @@ public class AnalysisStats
     public Dictionary<string, int> RiskDistribution { get; set; } = new();
     public Dictionary<string, int> ThreatTypes { get; set; } = new();
     public double AnomalyRate { get; set; }
-    [System.Text.Json.Serialization.JsonPropertyName("dataset_routed")]
+    [JsonPropertyName("dataset_routed")]
     public string DatasetRouted { get; set; } = string.Empty;
 }
 

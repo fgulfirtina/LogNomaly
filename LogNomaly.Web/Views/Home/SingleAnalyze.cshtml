@@ -84,6 +84,15 @@
                                 <span style="color:var(--ok)">✓</span> System operating normally. No action required.
                             </div>
                         }
+                        else if (r.PredictedClass == "TemporalAnomaly")
+                        {
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; border-left:3px solid #f97316;">
+                                <span style="color:#f97316">🕒</span> Verify if this action was authorized outside business hours
+                            </div>
+                            <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none;">
+                                <span style="color:#f97316">👤</span> Check user access logs for compromised credentials
+                            </div>
+                        }
                         else if (r.PredictedClass == "SystemFailure" || r.DatasetRouted == "HDFS")
                         {
                             <div class="meta-item" style="display:flex; align-items:center; gap:10px; background:var(--bg-page); border:none; padding:10px; border-radius:6px;">

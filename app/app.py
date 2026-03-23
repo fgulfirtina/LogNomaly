@@ -43,6 +43,23 @@ def clean_log(msg: str) -> str:
         msg = re.sub(r'\b\d+\b', '<NUM>', msg) # Tekil sayıları gizle
         return msg
 
+def extract_hour(log_line: str, dataset_type: str) -> int:
+    """
+    Extracts the hour of the day (0-23) from the log timestamp.
+    Returns -1 if parsing fails.
+    """
+    import re
+    try:
+        if dataset_type == "HDFS":
+            m = re.search(r'^\d{6}\s(\d{2})\d{4}', log_line)
+            if m: return int(m.group(1))
+        elif dataset_type == "BGL":
+            m = re.search(r'\d{4}-\d{2}-\d{2}-(\d{2})\.\d{2}\.\d{2}', log_line)
+            if m: return int(m.group(1))
+    except Exception:
+        pass
+    return -1
+
 # ======================================================================
 #  Model Bundle (Multi-Dataset Uyumlu Sınıf)
 # ======================================================================
@@ -87,13 +104,17 @@ class ModelBundle:
         self.loaded = True
         logger.info("✅ %s Modelleri Yüklendi. Feature: %d", self.dataset_type, self.iso.n_features_in_)
 
-    def vectorize(self, level: str, message: str) -> np.ndarray:
+    def vectorize(self, level: str, message: str, hour: int) -> np.ndarray:
         safe = level if level in self.le.classes_ else "UNKNOWN"
         lenc = self.le.transform([safe]).reshape(1, 1)
-        td   = np.zeros((1, 1))
+
+        # +++ NEW UEBA TEMPORAL FEATURE +++
+        hour_norm = (hour / 23.0) if hour != -1 else 0.5
+        hour_arr = np.array([[hour_norm]])
         cleaned_msg = clean_log(message)
         tv   = self.tfidf.transform([cleaned_msg])
-        return hstack([csr_matrix(np.hstack([lenc, td])), tv]).toarray()
+        
+        return hstack([csr_matrix(np.hstack([lenc, hour_arr])), tv]).toarray()
 
 
 # Global Model Sözlüğü
@@ -129,15 +150,19 @@ def detect_log_type(log_line: str) -> str:
 # ======================================================================
 #  Pipeline
 # ======================================================================
-def run_pipeline(level: str, message: str) -> dict:
-    # 1. Akıllı Yönlendirme (Smart Routing)
-    dataset_type = detect_log_type(message)
+def run_pipeline(level: str, message: str, raw_log: str = None) -> dict:
+    if raw_log is None:
+        raw_log = message
+
+    # 1. Akıllı Yönlendirme
+    dataset_type = detect_log_type(raw_log)
     bundle = bundles[dataset_type]
     
-    # Eğer HDFS seçildi ama model yoksa BGL'ye düş (Fallback)
     if not bundle.loaded:
         bundle = bundles["BGL"]
         dataset_type = "BGL (Fallback)"
+
+    extracted_hour = extract_hour(raw_log, dataset_type)
 
     # 2. Kural Motoru
     rule_result = rule_engine.check(message)
@@ -147,6 +172,8 @@ def run_pipeline(level: str, message: str) -> dict:
     if rule_score and rule_score >= 0.8:
         return {
             "level": level, "message": message, "dataset_routed": dataset_type,
+            "raw_log": raw_log, 
+            "extracted_hour": extracted_hour, # Artık hata vermeyecek!
             "is_known_threat": True, "threat_type": threat_type,
             "matched_rule": threat_type, "if_prediction": -1,
             "if_anomaly_score": 1.0, "predicted_class": threat_type,
@@ -155,47 +182,49 @@ def run_pipeline(level: str, message: str) -> dict:
         }
 
     # 3. ML Analizi (Seçilen Uzman Model ile)
-    x = bundle.vectorize(level, message)
+    extracted_hour = extract_hour(raw_log, dataset_type)
+    x = bundle.vectorize(level, message, extracted_hour)
     iso_score    = float(bundle.iso.decision_function(x)[0])
     anomaly_prob = float(np.clip(1.0 - (np.clip(iso_score, -0.5, 0.5) + 0.5), 0, 1))
     iso_pred     = int(bundle.iso.predict(x)[0])
 
-
-
     probs           = bundle.rf.predict_proba(x)[0]
     predicted_class = bundle.rf.classes_[int(np.argmax(probs))]
     rf_conf         = float(np.max(probs))
+    
     if predicted_class == "Normal":
-        # Eğer Normal diyorsa, risk sadece ufak bir anomali şüphesinden ibarettir
         risk = anomaly_prob * 0.3 
     else:
-        # Eğer SystemFailure veya BruteForce diyorsa, güven skorunu riske ekle!
         risk = 0.4 * anomaly_prob + 0.6 * rf_conf
 
-    # +++ YENİ: HYBRID SIEM OVERRIDE (Gerçek Dünya Güvenlik Ağı) +++
-    # Eğer yapay zeka (RF) logu eğitimde görmediği için kaçırdıysa, 
-    # Log Seviyesine (Level) bakarak riski biz manuel olarak fırlatıyoruz!
+    # SHAP verisi için boş başlangıç (Scope Hatasını Engeller)
+    shap_data = {}
+
+    # +++ YENİ: HYBRID SIEM OVERRIDE +++
     msg_lower = message.lower()
     if level in ["ERROR", "CRITICAL", "FATAL"] or "outofmemory" in msg_lower or "corrupted" in msg_lower:
-        risk = max(risk, 0.85) # Skoru en az 0.85 yap (KIRMIZI)
+        risk = max(risk, 0.85) 
         predicted_class = "SystemFailure"
     elif level in ["WARN", "WARNING"] or "missing" in msg_lower:
-        risk = max(risk, 0.65) # Skoru en az 0.65 yap (TURUNCU)
+        risk = max(risk, 0.65) 
         if predicted_class == "Normal": 
             predicted_class = "SystemFailure"
 
     if threat_type and rule_score is None:
         risk = min(1.0, risk + 0.15)
 
-    shap_data = {}
+    # SHAP Hesaplama
     if risk >= 0.50 and bundle.explainer:
         try:
+            # SHAP kütüphanesi x[0]'ı alır, gerçek model özelliklerini kullanır
             shap_data = bundle.explainer.explain_prediction(x[0])
         except Exception as e:
             logger.warning(f"SHAP hatasi: {e}")
 
     return {
         "level": level, "message": message, "dataset_routed": dataset_type,
+        "raw_log": raw_log, # +++ YENİ: Regex'in kesmediği orijinal, saatli log +++
+        "extracted_hour": extracted_hour, # +++ YENİ: Sadece saat bilgisi +++
         "is_known_threat": False,
         "threat_type": predicted_class if predicted_class != "Normal" else None,
         "matched_rule": threat_type, "if_prediction": iso_pred,
@@ -284,24 +313,21 @@ def analyze_file_ep():
     if not file_path or not os.path.exists(file_path):
         return jsonify({"error": "Dosya bulunamadi."}), 400
     try:
-        bgl_re  = re.compile(r"^(?:-|[A-Z0-9_]+)\s+\d+\s+\d{4}\.\d{2}\.\d{2}\s+\S+\s+\S+\s+\S+\s+\S+\s+(\w+)\s+(.+)$")
-        hdfs_re = re.compile(r"^\d{6}\s+\d{6}\s+\d+\s+(\w+)\s+[^\s:]+:\s+(.+)$")
         records = []
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             for raw in f:
                 line = raw.strip()
                 if not line: continue
-                m_bgl = bgl_re.match(line)
-                m_hdfs = hdfs_re.match(line)
                 
-                if m_bgl:
-                    records.append({"level": m_bgl.group(1).upper(), "message": m_bgl.group(2)})
-                elif m_hdfs:
-                    records.append({"level": m_hdfs.group(1).upper(), "message": m_hdfs.group(2)}) 
-                else:
-                    records.append({"level": "INFO", "message": line})
-                    
-        results = [run_pipeline(r["level"], r["message"]) for r in records]
+                # Regex ile uğraşmıyoruz, satırı olduğu gibi modele yolluyoruz!
+                records.append({
+                    "level": "INFO", # Varsayılan seviye
+                    "message": line, 
+                    "raw": line
+                })
+                
+        # Pipeline'a yolla
+        results = [run_pipeline(r["level"], r["message"], r["raw"]) for r in records]
         
         if session_id:
             _sessions[session_id] = results
