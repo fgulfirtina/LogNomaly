@@ -28,13 +28,31 @@
                 </li>
                 <li>
                     <a href="/Home/SingleAnalyze" class="@(ViewContext.RouteData.Values["action"]?.ToString() == "SingleAnalyze" ? "active" : "")">
-                        <span class="nav-icon">o</span> Tek Satir
+                        <span class="nav-icon">o</span> Single Line Analysis
                     </a>
+                </li>
+                @if (User.IsInRole("Senior"))
+                {
+                    <li style="margin-top: 15px; margin-bottom: 10px;">
+                        <div style="font-size: 10px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; padding-left: 12px;">Administration</div>
+                    </li>
+                    <li>
+                        <a href="/SocManager/Index" class="@(ViewContext.RouteData.Values["controller"]?.ToString() == "SocManager" ? "active" : "")">
+                            <span class="nav-icon">🛡️</span> SOC Manager
+                        </a>
+                    </li>
+                }
+                <li style="margin-top: 20px; padding-top: 10px; border-top: 0.5px solid var(--border);">
+                    <form asp-controller="Auth" asp-action="Logout" method="post" style="margin: 0; padding: 0;">
+                        <button type="submit" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; border-radius: var(--radius-sm); color: var(--danger); background: transparent; border: none; cursor: pointer; font-family: var(--font-sans); font-size: 13px; font-weight: 500; text-align: left; transition: all 0.15s;">
+                            <span class="nav-icon" style="color: var(--danger); font-size: 14px;">⏻</span> Sign Out
+                        </button>
+                    </form>
                 </li>
             </ul>
             <div class="api-status" id="apiStatus">
                 <span class="status-dot" id="statusDot"></span>
-                <span id="statusText" style="font-size:12px">Kontrol ediliyor...</span>
+                <span id="statusText" style="font-size:12px">Checking...</span>
             </div>
         </nav>
         <main class="main-content">

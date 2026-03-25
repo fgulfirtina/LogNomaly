@@ -1,150 +1,154 @@
-using LogNomaly.Web.Models;
-using LogNomaly.Web.Services;
+using LogNomaly.Web.ViewModels;
+using LogNomaly.Web.Entities.Models;
+using LogNomaly.Web.Services.Contracts;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-namespace LogNomaly.Web.Controllers;
-
-public class HomeController : Controller
+namespace LogNomaly.Web.Controllers
 {
-    private readonly IPythonApiService _api;
-    private readonly ILogger<HomeController> _logger;
-
-    public HomeController(IPythonApiService api, ILogger<HomeController> logger)
+    [Authorize]
+    public class HomeController : Controller
     {
-        _api = api;
-        _logger = logger;
-    }
+        private readonly IPythonApiService _api;
+        private readonly ILogger<HomeController> _logger;
 
-    // ── Dashboard ────────────────────────────────────────────────────
-    public async Task<IActionResult> Index()
-    {
-        var vm = new DashboardViewModel();
-        var sessionId = HttpContext.Session.GetString("SessionId");
-
-        if (!string.IsNullOrEmpty(sessionId))
+        public HomeController(IPythonApiService api, ILogger<HomeController> logger)
         {
-            vm.SessionId = sessionId;
-            vm.Stats = await _api.GetStatsAsync(sessionId);
-            var results = await _api.GetResultsAsync(sessionId, 1, 10);
-            if (results != null)
-                vm.RecentResults = results.Results;
+            _api = api;
+            _logger = logger;
         }
 
-        return View(vm);
-    }
-
-    // ── Log Upload & Analiz Sayfası ──────────────────────────────────
-    public IActionResult Analyze()
-    {
-        return View(new AnalyzeViewModel());
-    }
-
-    [HttpPost]
-    [RequestSizeLimit(52_428_800)] // 50MB
-    public async Task<IActionResult> Analyze(IFormFile? logFile)
-    {
-        var vm = new AnalyzeViewModel();
-
-        if (logFile == null || logFile.Length == 0)
+        // ── Dashboard ────────────────────────────────────────────────────
+        public async Task<IActionResult> Index()
         {
-            vm.ErrorMessage = "Please Select a Log File.";
+            var vm = new DashboardViewModel();
+            var sessionId = HttpContext.Session.GetString("SessionId");
+
+            if (!string.IsNullOrEmpty(sessionId))
+            {
+                vm.SessionId = sessionId;
+                vm.Stats = await _api.GetStatsAsync(sessionId);
+                var results = await _api.GetResultsAsync(sessionId, 1, 10);
+                if (results != null)
+                    vm.RecentResults = results.Results;
+            }
+
             return View(vm);
         }
 
-        // 1. Upload
-        var uploadResp = await _api.UploadFileAsync(logFile);
-        if (uploadResp == null)
+        // ── Log Upload & Analiz Sayfası ──────────────────────────────────
+        public IActionResult Analyze()
         {
-            vm.ErrorMessage = "Couldn't load the file. Does the Python API run?";
+            return View(new AnalyzeViewModel());
+        }
+
+        [HttpPost]
+        [RequestSizeLimit(52_428_800)] // 50MB
+        public async Task<IActionResult> Analyze(IFormFile? logFile)
+        {
+            var vm = new AnalyzeViewModel();
+
+            if (logFile == null || logFile.Length == 0)
+            {
+                vm.ErrorMessage = "Please Select a Log File.";
+                return View(vm);
+            }
+
+            // 1. Upload
+            var uploadResp = await _api.UploadFileAsync(logFile);
+            if (uploadResp == null)
+            {
+                vm.ErrorMessage = "Couldn't load the file. Does the Python API run?";
+                return View(vm);
+            }
+
+            // 2. Analiz
+            var analyzeResp = await _api.AnalyzeFileAsync(uploadResp.FilePath, uploadResp.SessionId);
+            if (analyzeResp == null)
+            {
+                vm.ErrorMessage = "Analysis Failed.";
+                return View(vm);
+            }
+
+            // Session'a kaydet
+            HttpContext.Session.SetString("SessionId", uploadResp.SessionId);
+
+            vm.SessionId = uploadResp.SessionId;
+            vm.Stats = analyzeResp.Stats;
+            vm.Results = analyzeResp.Results;
+
             return View(vm);
         }
 
-        // 2. Analiz
-        var analyzeResp = await _api.AnalyzeFileAsync(uploadResp.FilePath, uploadResp.SessionId);
-        if (analyzeResp == null)
+        // ── Tek Satır Analiz ─────────────────────────────────────────────
+        public IActionResult SingleAnalyze()
         {
-            vm.ErrorMessage = "Analysis Failed.";
+            return View(new SingleAnalyzeViewModel());
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> SingleAnalyze(string logLine)
+        {
+            var vm = new SingleAnalyzeViewModel { LogLine = logLine };
+
+            if (string.IsNullOrWhiteSpace(logLine))
+            {
+                vm.ErrorMessage = "Log Line cannot be null.";
+                return View(vm);
+            }
+
+            var result = await _api.AnalyzeSingleAsync(logLine);
+            if (result == null)
+            {
+                vm.ErrorMessage = "Couldn't load the file. Does the Python API run?";
+                return View(vm);
+            }
+
+            vm.Result = result;
             return View(vm);
         }
 
-        // Session'a kaydet
-        HttpContext.Session.SetString("SessionId", uploadResp.SessionId);
-
-        vm.SessionId = uploadResp.SessionId;
-        vm.Stats     = analyzeResp.Stats;
-        vm.Results   = analyzeResp.Results;
-
-        return View(vm);
-    }
-
-    // ── Tek Satır Analiz ─────────────────────────────────────────────
-    public IActionResult SingleAnalyze()
-    {
-        return View(new SingleAnalyzeViewModel());
-    }
-
-    [HttpPost]
-    public async Task<IActionResult> SingleAnalyze(string logLine)
-    {
-        var vm = new SingleAnalyzeViewModel { LogLine = logLine };
-
-        if (string.IsNullOrWhiteSpace(logLine))
+        // ── XAI Detay ────────────────────────────────────────────────────
+        public async Task<IActionResult> Xai(string sessionId, int index)
         {
-            vm.ErrorMessage = "Log Line cannot be null.";
+            var results = await _api.GetResultsAsync(sessionId, 1, 1000);
+            if (results == null || index >= results.Results.Count)
+                return RedirectToAction("Analyze");
+
+            return View(new XaiViewModel
+            {
+                Result = results.Results[index],
+                SessionId = sessionId
+            });
+        }
+
+
+        public async Task<IActionResult> Report(string sessionId)
+        {
+            if (string.IsNullOrEmpty(sessionId)) return RedirectToAction("Index");
+
+            var stats = await _api.GetStatsAsync(sessionId);
+            var results = await _api.GetResultsAsync(sessionId, 1, 100);
+
+            var vm = new ReportViewModel
+            {
+                SessionId = sessionId,
+                Stats = stats ?? new AnalysisStats(),
+                Results = results?.Results ?? new List<AnalysisResult>()
+            };
+
             return View(vm);
         }
 
-        var result = await _api.AnalyzeSingleAsync(logLine);
-        if (result == null)
+        // ── API Health Check (AJAX için) ─────────────────────────────────
+        [HttpGet]
+        public async Task<IActionResult> ApiHealth()
         {
-            vm.ErrorMessage = "Couldn't load the file. Does the Python API run?";
-            return View(vm);
+            var health = await _api.GetHealthAsync();
+            return Json(health);
         }
 
-        vm.Result = result;
-        return View(vm);
+        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
+        public IActionResult Error() => View();
     }
-
-    // ── XAI Detay ────────────────────────────────────────────────────
-    public async Task<IActionResult> Xai(string sessionId, int index)
-    {
-        var results = await _api.GetResultsAsync(sessionId, 1, 1000);
-        if (results == null || index >= results.Results.Count)
-            return RedirectToAction("Analyze");
-
-        return View(new XaiViewModel
-        {
-            Result    = results.Results[index],
-            SessionId = sessionId
-        });
-    }
-
-
-    public async Task<IActionResult> Report(string sessionId)
-    {
-        if (string.IsNullOrEmpty(sessionId)) return RedirectToAction("Index");
-
-        var stats = await _api.GetStatsAsync(sessionId);
-        var results = await _api.GetResultsAsync(sessionId, 1, 100);
-
-        var vm = new ReportViewModel
-        {
-            SessionId = sessionId,
-            Stats = stats ?? new AnalysisStats(),
-            Results = results?.Results ?? new List<AnalysisResult>()
-        };
-
-        return View(vm);
-    }
-
-    // ── API Health Check (AJAX için) ─────────────────────────────────
-    [HttpGet]
-    public async Task<IActionResult> ApiHealth()
-    {
-        var health = await _api.GetHealthAsync();
-        return Json(health);
-    }
-
-    [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
-    public IActionResult Error() => View();
 }
