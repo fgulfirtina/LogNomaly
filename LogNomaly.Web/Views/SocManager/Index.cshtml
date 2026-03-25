@@ -1,0 +1,136 @@
+﻿@model LogNomaly.Web.ViewModels.SocManagerViewModel
+@{
+    ViewData["Title"] = "SOC Management";
+}
+
+<div class="page-header" style="margin-bottom: 24px;">
+    <div>
+        <h1 class="page-title" style="margin:0;">SOC Management Console</h1>
+        <div class="page-subtitle">Senior Analyst Workspace & Queue Management</div>
+    </div>
+</div>
+
+<div class="two-col" style="grid-template-columns: 1fr;">
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">
+                🔍 Active Investigations
+                <span style="background:var(--accent); color:#111; padding:2px 8px; border-radius:12px; font-size:11px; margin-left:8px;">
+                    @Model.ActiveCases.Count Cases
+                </span>
+            </div>
+        </div>
+
+        @if (Model.ActiveCases.Any())
+        {
+            <div style="overflow-x: auto;">
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th>Case ID</th>
+                            <th>Log ID</th>
+                            <th>Threat Class</th>
+                            <th>Assigned To</th>
+                            <th>Status</th>
+                            <th>Opened At</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var invCase in Model.ActiveCases)
+                        {
+                            <tr>
+                                <td style="font-family:var(--font-mono); font-weight:500;">CAS-@invCase.Id.ToString("D4")</td>
+                                <td style="font-family:var(--font-mono); color:var(--text-muted);">@invCase.Feedback?.LogId</td>
+                                <td>
+                                    <span class="risk-badge @(invCase.Feedback?.RiskLevel ?? "Low")">
+                                        @(invCase.Feedback?.PredictedClass ?? "Unknown")
+                                    </span>
+                                </td>
+                                <td>
+                                    <div style="display:flex; align-items:center; gap:6px;">
+                                        <div style="width:20px; height:20px; background:var(--bg-page); border:1px solid var(--border); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px;">
+                                            @(invCase.AssignedAnalyst?.Username.Substring(0, 1).ToUpper() ?? "?")
+                                        </div>
+                                        <span style="font-size:12px;">@invCase.AssignedAnalyst?.Username</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span style="font-size:11px; font-weight:500; color:var(--warn);">@invCase.Status</span>
+                                </td>
+                                <td style="font-size:12px; color:var(--text-muted);">@invCase.OpenedAt.ToString("MMM dd, HH:mm")</td>
+                                <td>
+                                    <button class="btn btn-outline btn-sm">Review</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="empty-state">
+                <div class="empty-icon">☕</div>
+                <div style="font-weight:500;">No active investigations</div>
+                <div style="font-size:12px; color:var(--text-dim);">The SOC queue is currently clear.</div>
+            </div>
+        }
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">
+                🧠 Model Retraining Queue (False Positives)
+                <span style="background:var(--bg-page); border:1px solid var(--border); color:var(--text-muted); padding:2px 8px; border-radius:12px; font-size:11px; margin-left:8px;">
+                    @Model.PendingFalsePositives.Count Pending
+                </span>
+            </div>
+            <div class="card-subtitle">Approve these logs to augment the training dataset.</div>
+        </div>
+
+        @if (Model.PendingFalsePositives.Any())
+        {
+            <div style="overflow-x: auto;">
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th>Log ID</th>
+                            <th>AI Prediction</th>
+                            <th>Reported By</th>
+                            <th>Timestamp</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var fp in Model.PendingFalsePositives)
+                        {
+                            <tr>
+                                <td style="font-family:var(--font-mono); font-weight:500;">@fp.LogId</td>
+                                <td><span style="color:var(--danger); font-size:12px;">@fp.PredictedClass</span> → <span style="color:var(--ok); font-size:12px; font-weight:500;">Normal</span></td>
+                                <td style="font-size:12px;">@fp.Analyst?.Username</td>
+                                <td style="font-size:12px; color:var(--text-muted);">@fp.CreatedAt.ToString("MMM dd, HH:mm")</td>
+                                <td>
+                                    <div style="display:flex; gap:6px;">
+                                        <button class="btn btn-outline btn-sm" style="color:var(--ok); border-color:var(--ok);">Approve</button>
+                                        <button class="btn btn-outline btn-sm" style="color:var(--danger); border-color:var(--danger);">Reject</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="empty-state">
+                <div class="empty-icon">✨</div>
+                <div style="font-weight:500;">No pending false positives</div>
+                <div style="font-size:12px; color:var(--text-dim);">The AI model is currently aligned.</div>
+            </div>
+        }
+    </div>
+
+</div>

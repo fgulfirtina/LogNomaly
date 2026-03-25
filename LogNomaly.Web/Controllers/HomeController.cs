@@ -1,3 +1,4 @@
+using LogNomaly.Web.ViewModels;
 using LogNomaly.Web.Entities.Models;
 using LogNomaly.Web.Services.Contracts;
 using Microsoft.AspNetCore.Authorization;

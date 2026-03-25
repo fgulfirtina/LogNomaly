@@ -1,6 +1,6 @@
 ﻿using LogNomaly.Web.Data;
-using LogNomaly.Web.Entities.Models;
 using LogNomaly.Web.Utilities;
+using LogNomaly.Web.ViewModels;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;

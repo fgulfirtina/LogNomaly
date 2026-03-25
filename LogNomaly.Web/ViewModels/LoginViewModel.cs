@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace LogNomaly.Web.Entities.Models
+namespace LogNomaly.Web.ViewModels
 {
     public class LoginViewModel
     {
