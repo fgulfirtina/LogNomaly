@@ -1,9 +1,11 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using LogNomaly.Web.Entities.DTOs;
 using LogNomaly.Web.Services.Contracts;
+using Microsoft.AspNetCore.Authorization;
 
 namespace LogNomaly.Web.Controllers
 {
+    [Authorize]
     public class FeedbackController : Controller
     {
         private readonly IFeedbackService _feedbackService;

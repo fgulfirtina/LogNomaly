@@ -61,4 +61,11 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
+// Execute the database seeding logic before running the application
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    await DataSeeder.SeedInitialAnalystAsync(services);
+}
+
 app.Run();
